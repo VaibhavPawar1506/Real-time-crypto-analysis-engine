@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.stereotype.Service;
+import reactor.core.Disposable;
+import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
@@ -26,6 +28,7 @@ public class CryptoAnalyticsService {
     private final MarketTickEventBus eventBus;
     private final ReactiveStringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private Disposable streamDisposable;
 
     public CryptoAnalyticsService(MarketTickEventBus eventBus, ReactiveStringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
         this.eventBus = eventBus;
@@ -48,7 +51,7 @@ public class CryptoAnalyticsService {
     public void startAnalyticsPipeline() {
         log.info("Starting Crypto Analytics Service pipeline...");
 
-        eventBus.getTickStream()
+        this.streamDisposable = eventBus.getTickStream()
                 .doOnNext(this::processSlidingWindow)
                 .flatMap(tick ->
                         updateRedis(tick)
@@ -108,6 +111,14 @@ public class CryptoAnalyticsService {
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize MarketTick to JSON", e);
             return Mono.just(false);
+        }
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (streamDisposable != null && !streamDisposable.isDisposed()) {
+            log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
+            streamDisposable.dispose();
         }
     }
 }

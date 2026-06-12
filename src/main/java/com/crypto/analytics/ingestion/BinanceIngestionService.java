@@ -10,6 +10,8 @@ import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
+import reactor.core.Disposable;
+import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
@@ -26,6 +28,7 @@ public class BinanceIngestionService {
     private final ReactiveStringRedisTemplate redisTemplate;
     private final Counter ticksReceivedCounter;
     private static final String BINANCE_WS_URL = "wss://stream.binance.com:9443/ws/btcusdt@ticker";
+    private Disposable streamDisposable;
 
     public BinanceIngestionService(MarketTickEventBus eventBus, ObjectMapper objectMapper, ReactiveStringRedisTemplate redisTemplate, Counter ticksReceivedCounter) {
         this.eventBus = eventBus;
@@ -65,7 +68,7 @@ public class BinanceIngestionService {
         );
 
         // Subscribe asynchronously. Retry logic ensures it stays up if disconnected.
-        connectionMono
+        this.streamDisposable = connectionMono
                 .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofSeconds(5)))
                 .subscribe(
                         null,
@@ -80,6 +83,14 @@ public class BinanceIngestionService {
         } catch (JsonProcessingException e) {
             log.error("Failed to parse market tick JSON: {}", json, e);
             return null;
+        }
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (streamDisposable != null && !streamDisposable.isDisposed()) {
+            log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
+            streamDisposable.dispose();
         }
     }
 }
