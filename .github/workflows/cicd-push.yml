@@ -1,0 +1,35 @@
+name: CI/CD Push Verification
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Configure Git Bot
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update build-info.txt
+        run: |
+          echo "Last pipeline run: $(date)" > build-info.txt
+          
+      - name: Commit and Push changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.AUTOMATIC_GITHUB_TOKEN }}
+        run: |
+          git add build-info.txt
+          git commit -m "Automated build timestamp update [skip ci]" || echo "No changes to commit"
+          # We use the remote repo url with the token included to push changes properly
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          git push origin main
