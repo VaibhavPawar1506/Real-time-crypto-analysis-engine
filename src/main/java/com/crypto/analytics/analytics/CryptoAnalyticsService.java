@@ -4,13 +4,12 @@ import com.crypto.analytics.ingestion.MarketTick;
 import com.crypto.analytics.ingestion.MarketTickEventBus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
-import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
@@ -19,9 +18,10 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
-public class CryptoAnalyticsService {
+public class CryptoAnalyticsService implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(CryptoAnalyticsService.class);
 
@@ -29,6 +29,7 @@ public class CryptoAnalyticsService {
     private final ReactiveStringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private Disposable streamDisposable;
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
     public CryptoAnalyticsService(MarketTickEventBus eventBus, ReactiveStringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
         this.eventBus = eventBus;
@@ -47,7 +48,33 @@ public class CryptoAnalyticsService {
         return snapshotMap.values();
     }
 
-    @PostConstruct
+    @Override
+    public void start() {
+        if (running.compareAndSet(false, true)) {
+            startAnalyticsPipeline();
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (running.compareAndSet(true, false)) {
+            if (streamDisposable != null && !streamDisposable.isDisposed()) {
+                log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
+                streamDisposable.dispose();
+            }
+        }
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE;
+    }
+
     public void startAnalyticsPipeline() {
         log.info("Starting Crypto Analytics Service pipeline...");
 
@@ -111,14 +138,6 @@ public class CryptoAnalyticsService {
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize MarketTick to JSON", e);
             return Mono.just(false);
-        }
-    }
-
-    @PreDestroy
-    public void cleanup() {
-        if (streamDisposable != null && !streamDisposable.isDisposed()) {
-            log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
-            streamDisposable.dispose();
         }
     }
 }

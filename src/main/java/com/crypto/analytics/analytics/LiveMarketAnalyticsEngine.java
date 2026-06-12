@@ -210,6 +210,7 @@ public class LiveMarketAnalyticsEngine {
 
             if (percentChange > dynamicRuleConfig.getVolatilityThreshold()) {
                 alertEngine.fireAlertAsync(new AlertPayload(
+                        tick.symbol(),
                         String.format("Price Volatility Exceeded %.2f%% Window Threshold", dynamicRuleConfig.getVolatilityThreshold()),
                         "PRICE_MOVEMENT",
                         close.doubleValue(),
@@ -220,6 +221,7 @@ public class LiveMarketAnalyticsEngine {
 
         if (count > 0 && count % 10 == 0) {
             alertEngine.fireAlertAsync(new AlertPayload(
+                    tick.symbol(),
                     "System Throughput Milestone reached: " + count + " ticks in window.",
                     "SYSTEM_THROUGHPUT",
                     close.doubleValue(),

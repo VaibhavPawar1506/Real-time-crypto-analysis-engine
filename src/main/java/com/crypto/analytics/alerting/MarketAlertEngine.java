@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -18,12 +19,13 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
-public class MarketAlertEngine {
+public class MarketAlertEngine implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(MarketAlertEngine.class);
-    private static final String WEBHOOK_URL = "https://httpbin.org/post";
+    private static final String WEBHOOK_URL = "http://localhost:8080/mock-alert";
     private static final String SECRET_KEY = "crypto-analytics-hmac-secret-key-2026";
 
     private final WebClient webClient;
@@ -31,6 +33,8 @@ public class MarketAlertEngine {
     private final CryptoEngineConfig engineConfig;
     private final ObjectMapper objectMapper;
     private final Counter alertsFiredCounter;
+    
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
     public MarketAlertEngine(WebClient.Builder webClientBuilder,
                              ReactiveRedisTemplate<String, String> redisTemplate,
@@ -42,6 +46,28 @@ public class MarketAlertEngine {
         this.engineConfig = engineConfig;
         this.objectMapper = objectMapper;
         this.alertsFiredCounter = alertsFiredCounter;
+    }
+
+    @Override
+    public void start() {
+        running.set(true);
+        log.info("MarketAlertEngine started.");
+    }
+
+    @Override
+    public void stop() {
+        running.set(false);
+        log.info("MarketAlertEngine stopped.");
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE; // Stop first
     }
 
     public Mono<Boolean> isDuplicateEvent(String tradeId) {
@@ -91,6 +117,10 @@ public class MarketAlertEngine {
                 .retryWhen(Retry.backoff(3, Duration.ofSeconds(1)))
                 .onErrorResume(error -> {
                     log.error("[DLQ TRIGGERED] Secure alert failed after retries for {}: {}", symbol, error.getMessage());
+                    if (!this.isRunning()) {
+                        System.err.println("[DEAD-LETTER] Redis is stopped. Dropping payload to System.err: " + jsonPayload);
+                        return Mono.empty();
+                    }
                     return redisTemplate.opsForList()
                             .leftPush("alerts:dlq", jsonPayload)
                             .then(Mono.empty());
@@ -101,8 +131,7 @@ public class MarketAlertEngine {
                 );
     }
 
-    // Retaining this for backwards compatibility with existing usages (e.g. LiveMarketAnalyticsEngine)
     public void fireAlertAsync(AlertPayload payload) {
-        triggerSecureAlert("UNKNOWN", payload.currentPrice());
+        triggerSecureAlert(payload.symbol(), payload.currentPrice());
     }
 }
