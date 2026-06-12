@@ -8,6 +8,7 @@ com\crypto\analytics\analytics\LiveMarketAnalyticsEngine$AnalyticsMetrics.class
 com\crypto\analytics\analytics\AnalyticsSnapshot.class
 com\crypto\analytics\ingestion\MarketTick.class
 com\crypto\analytics\config\DynamicRuleConfig.class
+com\crypto\analytics\config\CryptoEngineConfig.class
 com\crypto\analytics\ingestion\MarketTickEventBus.class
 com\crypto\analytics\websocket\CryptoBroadcastWorker.class
 com\crypto\analytics\alerting\AlertPayload.class
