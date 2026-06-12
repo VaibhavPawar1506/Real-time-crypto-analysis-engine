@@ -3,26 +3,26 @@ package com.crypto.analytics.ingestion;
 import com.crypto.analytics.config.CryptoEngineConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import io.micrometer.core.instrument.Counter;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import reactor.core.Disposable;
-import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.BufferOverflowStrategy;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Service
-public class BinanceIngestionService {
+public class BinanceIngestionService implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(BinanceIngestionService.class);
 
@@ -32,6 +32,8 @@ public class BinanceIngestionService {
     private final Counter ticksReceivedCounter;
     private final CryptoEngineConfig engineConfig;
     private Disposable streamDisposable;
+    
+    private final AtomicBoolean running = new AtomicBoolean(false);
 
     public BinanceIngestionService(MarketTickEventBus eventBus, ObjectMapper objectMapper, ReactiveStringRedisTemplate redisTemplate, Counter ticksReceivedCounter, CryptoEngineConfig engineConfig) {
         this.eventBus = eventBus;
@@ -41,12 +43,36 @@ public class BinanceIngestionService {
         this.engineConfig = engineConfig;
     }
 
-    @PostConstruct
-    public void init() {
-        startMultiplexStream();
+    @Override
+    public void start() {
+        if (running.compareAndSet(false, true)) {
+            startMultiplexStream();
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (running.compareAndSet(true, false)) {
+            if (streamDisposable != null && !streamDisposable.isDisposed()) {
+                log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
+                streamDisposable.dispose();
+            }
+        }
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    @Override
+    public int getPhase() {
+        return Integer.MAX_VALUE; // Shutdown before LettuceConnectionFactory
     }
 
     public void startMultiplexStream() {
+        if (!isRunning()) return; // Prevent recreation during shutdown
+        
         if (streamDisposable != null && !streamDisposable.isDisposed()) {
             log.info("Disposing previous WebSocket connection to re-establish multiplex stream...");
             streamDisposable.dispose();
@@ -109,14 +135,6 @@ public class BinanceIngestionService {
         } catch (Exception e) {
             log.error("Failed to parse market tick JSON: {}", json, e);
             return null;
-        }
-    }
-
-    @PreDestroy
-    public void cleanup() {
-        if (streamDisposable != null && !streamDisposable.isDisposed()) {
-            log.info("[SHUTDOWN] Programmatically disposing active reactive stream pipelines before thread pool termination...");
-            streamDisposable.dispose();
         }
     }
 }
